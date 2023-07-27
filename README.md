@@ -21,33 +21,21 @@ Docs and guides at [https://docs.livekit.io](https://docs.livekit.io)
 ### Yarn
 
 ```shell
-yarn add livekit-client
+yarn add @dtelecom/livekit-client
 ```
 
 ### NPM
 
 ```shell
-npm install livekit-client --save
+npm install @dtelecom/livekit-client --save
 ```
-
-### Minified JS
-
-To use the SDK without a package manager, you can include it with a script tag:
-
-```html
-<script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
-```
-
-The module will be exported under `LivekitClient` in the global namespace. When
-accessing symbols from the class, you'd need to prefix them with `LivekitClient.`.
-For example, `Room` becomes `LivekitClient.Room`.
 
 ## Usage
 
 Examples below are in TypeScript, if using JS/CommonJS imports replace import with:
 
 ```javascript
-const livekit = require('livekit-client');
+const livekit = require('@dtelecom/livekit-client');
 
 const room = new livekit.Room(...);
 
@@ -66,7 +54,7 @@ import {
   RemoteTrackPublication,
   Room,
   RoomEvent,
-} from 'livekit-client';
+} from '@dtelecom/livekit-client';
 
 // creates a new room with options
 const room = new Room({
