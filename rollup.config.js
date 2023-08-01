@@ -38,13 +38,13 @@ export default {
   input: 'src/index.ts',
   output: [
     {
-      file: `dist/${packageJson.name}.esm.mjs`,
+      file: `dist/livekit-client.esm.mjs`,
       format: 'es',
       strict: true,
       sourcemap: true,
     },
     {
-      file: `dist/${packageJson.name}.umd.js`,
+      file: `dist/livekit-client.umd.js`,
       format: 'umd',
       strict: true,
       sourcemap: true,
