@@ -148,7 +148,7 @@ export interface ScreenShareCaptureOptions {
   audio?: boolean | AudioCaptureOptions;
 
   /**
-   * capture resolution, defaults to screen resolution
+   * capture resolution defaults to full HD except for Safari
    * NOTE: In Safari 17, specifying any resolution at all would lead to a low-resolution
    * capture. https://bugs.webkit.org/show_bug.cgi?id=263015
    */
