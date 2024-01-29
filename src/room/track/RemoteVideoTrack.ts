@@ -34,7 +34,7 @@ export default class RemoteVideoTrack extends RemoteTrack {
   }
 
   get isAdaptiveStream(): boolean {
-    return this.adaptiveStreamSettings !== undefined;
+    return !!this.adaptiveStreamSettings?.updateDimensions;
   }
 
   /**
@@ -89,21 +89,29 @@ export default class RemoteVideoTrack extends RemoteTrack {
       this.adaptiveStreamSettings &&
       this.elementInfos.find((info) => info === elementInfo) === undefined
     ) {
-      elementInfo.handleResize = () => {
-        this.debouncedHandleResize();
-      };
-      elementInfo.handleVisibilityChanged = () => {
-        this.updateVisibility();
-      };
+      if (this.adaptiveStreamSettings.updateDimensions) {
+        elementInfo.handleResize = () => {
+          this.debouncedHandleResize();
+        };
+      }
+      if (this.adaptiveStreamSettings.pauseWhenNotVisible) {
+        elementInfo.handleVisibilityChanged = () => {
+          this.updateVisibility();
+        };
+      }
       this.elementInfos.push(elementInfo);
       elementInfo.observe();
-      // trigger the first resize update cycle
-      // if the tab is backgrounded, the initial resize event does not fire until
-      // the tab comes into focus for the first time.
-      this.debouncedHandleResize();
-      this.updateVisibility();
+      if (this.adaptiveStreamSettings.updateDimensions) {
+        // trigger the first resize update cycle
+        // if the tab is backgrounded, the initial resize event does not fire until
+        // the tab comes into focus for the first time.
+        this.debouncedHandleResize();
+      }
+      if (this.adaptiveStreamSettings.pauseWhenNotVisible) {
+        this.updateVisibility();
+      }
     } else {
-      log.warn('visibility resize observer not triggered');
+      log.warn('visibility and resize observer not triggered');
     }
   }
 

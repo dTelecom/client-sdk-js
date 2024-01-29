@@ -22,4 +22,12 @@ export type AdaptiveStreamSettings = {
    * Defaults to true.
    */
   pauseVideoInBackground?: boolean;
+  /**
+   * If true, video quality changes on resize.
+   */
+  updateDimensions?: boolean;
+  /**
+   * If true, video gets paused when not visible.
+   */
+  pauseWhenNotVisible?: boolean;
 };
