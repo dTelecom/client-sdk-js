@@ -34,7 +34,7 @@ export default class RemoteVideoTrack extends RemoteTrack {
   }
 
   get isAdaptiveStream(): boolean {
-    return !!this.adaptiveStreamSettings?.updateDimensions;
+    return this.adaptiveStreamSettings?.updateDimensions === true;
   }
 
   /**
@@ -210,7 +210,11 @@ export default class RemoteVideoTrack extends RemoteTrack {
 
   protected async handleAppVisibilityChanged() {
     await super.handleAppVisibilityChanged();
-    if (!this.isAdaptiveStream) return;
+    if (
+      !this.isAdaptiveStream &&
+      !this.adaptiveStreamSettings?.pauseWhenNotVisible &&
+      !this.adaptiveStreamSettings?.pauseVideoInBackground
+    ) return;
     this.updateVisibility();
   }
 
