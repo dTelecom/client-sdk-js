@@ -121,7 +121,7 @@ export default class RemoteVideoTrack extends RemoteTrack {
    * @internal
    */
   stopObservingElementInfo(elementInfo: ElementInfo) {
-    if (!this.isAdaptiveStream) {
+    if (!this.adaptiveStreamSettings) {
       log.warn('stopObservingElementInfo ignored');
       return;
     }
@@ -130,8 +130,12 @@ export default class RemoteVideoTrack extends RemoteTrack {
       info.stopObserving();
     }
     this.elementInfos = this.elementInfos.filter((info) => info !== elementInfo);
-    this.updateVisibility();
-    this.debouncedHandleResize();
+    if (this.adaptiveStreamSettings?.pauseWhenNotVisible) {
+      this.updateVisibility();
+    }
+    if (this.adaptiveStreamSettings?.updateDimensions) {
+      this.debouncedHandleResize();
+    }
   }
 
   detach(): HTMLMediaElement[];
