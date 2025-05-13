@@ -28,6 +28,7 @@ import {
   supportsAdaptiveStream,
   supportsDynacast,
   supportsVP9,
+  Mutex,
 } from './room/utils';
 
 export * from './connectionHelper/ConnectionCheck';
@@ -53,6 +54,7 @@ export {
   supportsDynacast,
   supportsAV1,
   supportsVP9,
+  Mutex,
   createAudioAnalyser,
   LogLevel,
   Room,
