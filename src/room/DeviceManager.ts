@@ -17,6 +17,12 @@ export default class DeviceManager {
 
   static userMediaPromiseMap: Map<MediaDeviceKind, Promise<MediaStream>> = new Map();
 
+  private _previousDevices: MediaDeviceInfo[] = [];
+
+  get previousDevices() {
+    return this._previousDevices;
+  }
+
   async getDevices(
     kind?: MediaDeviceKind,
     requestPermissions: boolean = true,
@@ -37,12 +43,11 @@ export default class DeviceManager {
 
     if (
       requestPermissions &&
-      kind &&
       // for safari we need to skip this check, as otherwise it will re-acquire user media and fail on iOS https://bugs.webkit.org/show_bug.cgi?id=179363
-      (!DeviceManager.userMediaPromiseMap.get(kind) || !isSafari())
+      !(isSafari() && this.hasDeviceInUse(kind))
     ) {
       const isDummyDeviceOrEmpty =
-        devices.length === 0 ||
+        devices.filter((d) => d.kind === kind).length === 0 ||
         devices.some((device) => {
           const noLabel = device.label === '';
           const isRelevant = kind ? device.kind === kind : true;
@@ -52,7 +57,7 @@ export default class DeviceManager {
       if (isDummyDeviceOrEmpty) {
         const permissionsToAcquire = {
           video: kind !== 'audioinput' && kind !== 'audiooutput',
-          audio: kind !== 'videoinput',
+          audio: kind !== 'videoinput' && { deviceId: { ideal: 'default' } },
         };
         const stream = await navigator.mediaDevices.getUserMedia(permissionsToAcquire);
         devices = await navigator.mediaDevices.enumerateDevices();
@@ -61,6 +66,8 @@ export default class DeviceManager {
         });
       }
     }
+    this._previousDevices = devices;
+
     if (kind) {
       devices = devices.filter((device) => device.kind === kind);
     }
@@ -81,8 +88,28 @@ export default class DeviceManager {
     // device has been chosen
     const devices = await this.getDevices(kind);
 
-    const device = devices.find((d) => d.groupId === groupId && d.deviceId !== defaultId);
+    const defaultDevice = devices.find((d) => d.deviceId === defaultId);
+
+    if (!defaultDevice) {
+      log.warn('could not reliably determine default device');
+      return undefined;
+    }
+
+    const device = devices.find(
+      (d) => d.deviceId !== defaultId && d.groupId === (groupId ?? defaultDevice.groupId),
+    );
+
+    if (!device) {
+      log.warn('could not reliably determine default device');
+      return undefined;
+    }
 
     return device?.deviceId;
+  }
+
+  private hasDeviceInUse(kind?: MediaDeviceKind): boolean {
+    return kind
+      ? DeviceManager.userMediaPromiseMap.has(kind)
+      : DeviceManager.userMediaPromiseMap.size > 0;
   }
 }
