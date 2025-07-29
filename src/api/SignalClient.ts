@@ -56,6 +56,7 @@ interface ConnectOpts {
 // public options
 export interface SignalOptions {
   autoSubscribe: boolean;
+  fallbackUrs?: string[]
   /** @deprecated */
   publishOnly?: string;
   adaptiveStream?: boolean;

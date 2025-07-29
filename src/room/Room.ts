@@ -70,8 +70,11 @@ import {
   isWeb,
   supportsSetSinkId,
   unpackStreamId,
-  unwrapConstraint, isSafari,
-} from './utils';
+  unwrapConstraint,
+  isSafari,
+  getDisconnectReasonFromConnectionError,
+} from './utils'
+import { FallbackUrlProvider } from './FallbackUrlProvider';
 
 export enum ConnectionState {
   Disconnected = 'disconnected',
@@ -141,6 +144,8 @@ class Room extends EventEmitter<RoomEventCallbacks> {
   private cachedParticipantSids: Array<string>;
 
   private connectionReconcileInterval?: ReturnType<typeof setInterval>;
+
+  private fallbackUrlProvider?: FallbackUrlProvider
 
   /**
    * Creates a new Room, the primary construct for a LiveKit session.
@@ -345,7 +350,17 @@ class Room extends EventEmitter<RoomEventCallbacks> {
    * @experimental
    */
   async prepareConnection(url: string) {
-    await fetch(`http${url.substring(2)}`, { method: 'HEAD' });
+    if (this.connOptions?.fallbackUrls) {
+      this.fallbackUrlProvider = new FallbackUrlProvider(this.connOptions.fallbackUrls)
+      const nextUrl = this.fallbackUrlProvider.getNextUrl()
+
+      if (nextUrl && this.state === ConnectionState.Disconnected) {
+        await fetch(`http${nextUrl.substring(2)}`, { method: 'HEAD' });
+        log.debug(`prepared connection to ${nextUrl}`);
+      }
+    } else {
+      await fetch(`http${url.substring(2)}`, { method: 'HEAD' });
+    }
   }
 
   connect = async (url: string, token: string, opts?: RoomConnectOptions): Promise<void> => {
@@ -368,6 +383,10 @@ class Room extends EventEmitter<RoomEventCallbacks> {
 
     const urlProvider = new RegionUrlProvider(url, token);
 
+    if (opts?.fallbackUrls) {
+      this.fallbackUrlProvider = new FallbackUrlProvider(opts.fallbackUrls)
+    }
+
     const connectFn = async (
       resolve: () => void,
       reject: (reason: any) => void,
@@ -387,29 +406,44 @@ class Room extends EventEmitter<RoomEventCallbacks> {
         resolve();
       } catch (e) {
         if (
-          isCloud(new URL(url)) &&
+          (isCloud(new URL(url)) || this.fallbackUrlProvider) &&
           e instanceof ConnectionError &&
           e.reason !== ConnectionErrorReason.Cancelled
         ) {
           let nextUrl: string | null = null;
           try {
-            nextUrl = await urlProvider.getNextBestRegionUrl(this.abortController?.signal);
+            if (this.fallbackUrlProvider) {
+              nextUrl = this.fallbackUrlProvider.getNextUrl()
+            } else {
+              nextUrl = await urlProvider.getNextBestRegionUrl(this.abortController?.signal);
+            }
           } catch (error) {
             if (
               error instanceof ConnectionError &&
               (error.status === 401 || error.reason === ConnectionErrorReason.Cancelled)
             ) {
+              this.handleDisconnect(this.options.stopLocalTrackOnUnpublish);
               reject(error);
               return;
             }
           }
+
           if (nextUrl) {
             log.debug('initial connection failed, retrying with another region');
             await connectFn(resolve, reject, nextUrl);
           } else {
+            this.handleDisconnect(
+              this.options.stopLocalTrackOnUnpublish,
+              getDisconnectReasonFromConnectionError(e)
+            );
             reject(e);
           }
         } else {
+          let disconnectReason = DisconnectReason.UNKNOWN_REASON;
+          if (e instanceof ConnectionError) {
+            disconnectReason = getDisconnectReasonFromConnectionError(e);
+          }
+          this.handleDisconnect(this.options.stopLocalTrackOnUnpublish, disconnectReason);
           reject(e);
         }
       }
@@ -439,6 +473,7 @@ class Room extends EventEmitter<RoomEventCallbacks> {
           typeof roomOptions.adaptiveStream === 'object' ? true : roomOptions.adaptiveStream,
         maxRetries: connectOptions.maxRetries,
         e2eeEnabled: !!this.e2eeManager,
+        fallbackUrs: connectOptions.fallbackUrls
       },
       abortController.signal,
     );
@@ -522,8 +557,8 @@ class Room extends EventEmitter<RoomEventCallbacks> {
       this.setupLocalParticipantEvents();
       this.emit(RoomEvent.SignalConnected);
     } catch (err) {
+      await this.engine.close();
       this.recreateEngine();
-      this.handleDisconnect(this.options.stopLocalTrackOnUnpublish);
       const resultingError = new ConnectionError(`could not establish signal connection`);
       if (err instanceof Error) {
         resultingError.message = `${resultingError.message}: ${err.message}`;
@@ -537,8 +572,8 @@ class Room extends EventEmitter<RoomEventCallbacks> {
     }
 
     if (abortController.signal.aborted) {
+      await this.engine.close();
       this.recreateEngine();
-      this.handleDisconnect(this.options.stopLocalTrackOnUnpublish);
       throw new ConnectionError(`Connection attempt aborted`);
     }
 
@@ -548,8 +583,8 @@ class Room extends EventEmitter<RoomEventCallbacks> {
         abortController,
       );
     } catch (e) {
+      await this.engine.close();
       this.recreateEngine();
-      this.handleDisconnect(this.options.stopLocalTrackOnUnpublish);
       throw e;
     }
 

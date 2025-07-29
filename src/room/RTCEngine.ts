@@ -56,6 +56,7 @@ import {
   supportsAddTrack,
   supportsTransceiver,
 } from './utils';
+import { FallbackUrlProvider } from './FallbackUrlProvider'
 
 const lossyDataChannel = '_lossy';
 const reliableDataChannel = '_reliable';
@@ -156,6 +157,10 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
 
   private regionUrlProvider?: RegionUrlProvider;
 
+  private fallbackUrlProvider?: FallbackUrlProvider;
+
+  private fallbackUrls?: string[]
+
   constructor(private options: InternalRoomOptions) {
     super();
     this.client = new SignalClient();
@@ -190,6 +195,9 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
     this.url = url;
     this.token = token;
     this.signalOpts = opts;
+    this.maxJoinAttempts = opts.maxRetries;
+    this.fallbackUrls = opts.fallbackUrs;
+
     try {
       this.joinAttempts += 1;
       const joinResponse = await this.client.join(url, token, opts, abortSignal);
@@ -801,6 +809,9 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
     if (this.url && this.token && isCloud(new URL(this.url))) {
       this.regionUrlProvider = new RegionUrlProvider(this.url, this.token);
     }
+    if (this.fallbackUrls) {
+      this.fallbackUrlProvider = new FallbackUrlProvider(this.fallbackUrls);
+    }
     this.reconnectTimeout = CriticalTimers.setTimeout(
       () => this.attemptReconnect(disconnectReason),
       delay,
@@ -913,16 +924,21 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
 
       await this.waitForPCReconnected();
       this.regionUrlProvider?.resetAttempts();
+      this.fallbackUrlProvider?.resetAttempts();
       // reconnect success
       this.emit(EngineEvent.Restarted);
     } catch (error) {
-      const nextRegionUrl = await this.regionUrlProvider?.getNextBestRegionUrl();
+      let nextRegionUrl = await this.regionUrlProvider?.getNextBestRegionUrl();
+      if (this.fallbackUrlProvider && !nextRegionUrl) {
+       nextRegionUrl = this.fallbackUrlProvider.getNextUrl();
+      }
       if (nextRegionUrl) {
         await this.restartConnection(nextRegionUrl);
         return;
       } else {
         // no more regions to try (or we're not on cloud)
         this.regionUrlProvider?.resetAttempts();
+        this.fallbackUrlProvider?.resetAttempts();
         throw error;
       }
     }

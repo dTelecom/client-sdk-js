@@ -1,4 +1,4 @@
-import { ClientInfo, ClientInfo_SDK } from '../proto/livekit_models';
+import { ClientInfo, ClientInfo_SDK, DisconnectReason } from '../proto/livekit_models'
 import { getBrowser } from '../utils/browserParser';
 import { protocolVersion, version } from '../version';
 import type LocalAudioTrack from './track/LocalAudioTrack';
@@ -6,6 +6,8 @@ import type RemoteAudioTrack from './track/RemoteAudioTrack';
 import { VideoCodec, videoCodecs } from './track/options';
 import { getNewAudioContext } from './track/utils';
 import type { LiveKitReactNativeInfo } from './types';
+import type { ConnectionError } from './errors'
+import { ConnectionErrorReason } from './errors'
 
 const separator = '|';
 export const ddExtensionURI =
@@ -456,4 +458,15 @@ export function unwrapConstraint(constraint: ConstrainDOMString): string {
     return constraint.ideal;
   }
   throw Error('could not unwrap constraint');
+}
+
+export function getDisconnectReasonFromConnectionError(e: ConnectionError) {
+  switch (e.reason) {
+    case ConnectionErrorReason.Cancelled:
+      return DisconnectReason.CLIENT_INITIATED;
+    case ConnectionErrorReason.ServerUnreachable:
+      return DisconnectReason.JOIN_FAILURE;
+    default:
+      return DisconnectReason.UNKNOWN_REASON;
+  }
 }
