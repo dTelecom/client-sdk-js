@@ -851,7 +851,10 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
         log.debug('received unrecoverable error', { error: e });
         // unrecoverable
         recoverable = false;
-      } else if (!(e instanceof SignalReconnectError)) {
+      } else if (
+        e instanceof SignalReconnectError && e.message === 'server was not reachable' ||
+        !(e instanceof SignalReconnectError)
+      ) {
         // cannot resume
         this.fullReconnectOnNext = true;
       }
