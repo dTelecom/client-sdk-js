@@ -110,7 +110,35 @@ export function getNewAudioContext(): AudioContext | void {
     // @ts-ignore
     typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext);
   if (AudioContext) {
-    return new AudioContext({ latencyHint: 'interactive' });
+    const audioContext = new AudioContext({ latencyHint: 'interactive' });
+    // If the audio context is suspended, we need to resume it when the user clicks on the page
+    if (
+      audioContext.state === 'suspended' &&
+      typeof window !== 'undefined' &&
+      window.document?.body
+    ) {
+      const handleResume = async () => {
+        try {
+          if (audioContext.state === 'suspended') {
+            await audioContext.resume();
+          }
+        } catch (e) {
+          console.warn('Error trying to auto-resume audio context', e);
+        } finally {
+          window.document.body?.removeEventListener('click', handleResume);
+        }
+      };
+
+      // https://developer.mozilla.org/en-US/docs/Web/API/BaseAudioContext/statechange_event
+      audioContext.addEventListener('statechange', () => {
+        if (audioContext.state === 'closed') {
+          window.document.body?.removeEventListener('click', handleResume);
+        }
+      });
+
+      window.document.body.addEventListener('click', handleResume);
+    }
+    return audioContext;
   }
 }
 
