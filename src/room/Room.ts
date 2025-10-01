@@ -73,6 +73,7 @@ import {
   unwrapConstraint,
   isSafari,
   getDisconnectReasonFromConnectionError,
+  sleep,
 } from './utils'
 import { FallbackUrlProvider } from './FallbackUrlProvider';
 
@@ -789,12 +790,13 @@ class Room extends EventEmitter<RoomEventCallbacks> {
     });
 
     try {
-      await Promise.all(
-        elements.map((e) => {
+      await Promise.all([
+        this.acquireAudioContext(),
+        ...elements.map((e) => {
           e.muted = false;
           return e.play();
         }),
-      );
+      ]);
       this.handleAudioPlaybackStarted();
     } catch (err) {
       this.handleAudioPlaybackFailed(err);
@@ -1410,7 +1412,7 @@ class Room extends EventEmitter<RoomEventCallbacks> {
       // for iOS a newly created AudioContext is always in `suspended` state.
       // we try our best to resume the context here, if that doesn't work, we just continue with regular processing
       try {
-        await this.audioContext.resume();
+        await Promise.race([this.audioContext.resume(), sleep(200)]);
       } catch (e: any) {
         log.warn(e);
       }
