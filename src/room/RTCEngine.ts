@@ -217,18 +217,21 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
 
       this.clientConfiguration = joinResponse.clientConfiguration;
 
+      this.joinAttempts = 0;
       return joinResponse;
     } catch (e) {
-      if (e instanceof ConnectionError) {
+      if (e instanceof ConnectionError && navigator.onLine === true) {
         if (e.reason === ConnectionErrorReason.ServerUnreachable) {
-          log.warn(
-            `Couldn't connect to server, attempt ${this.joinAttempts} of ${this.maxJoinAttempts}`,
-          );
-          if (this.joinAttempts < this.maxJoinAttempts) {
+          if (this.joinAttempts <= this.maxJoinAttempts) {
+            await sleep(220 * this.joinAttempts);
+            log.warn(
+              `Couldn't connect to server, attempt ${this.joinAttempts} of ${this.maxJoinAttempts}`,
+            );
             return this.join(url, token, opts, abortSignal);
           }
         }
       }
+      this.joinAttempts = 0;
       throw e;
     }
   }
@@ -863,8 +866,7 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
         this.handleDisconnect('reconnect', ReconnectReason.RR_UNKNOWN);
       } else {
         log.info(
-          `could not recover connection after ${this.reconnectAttempts} attempts, ${
-            Date.now() - this.reconnectStart
+          `could not recover connection after ${this.reconnectAttempts} attempts, ${Date.now() - this.reconnectStart
           }ms. giving up`,
         );
         this.emit(EngineEvent.Disconnected);
@@ -931,9 +933,16 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
       // reconnect success
       this.emit(EngineEvent.Restarted);
     } catch (error) {
+      // Check if browser is offline first - no point cycling regions if offline
+      if (navigator.onLine === false) {
+        this.regionUrlProvider?.resetAttempts();
+        this.fallbackUrlProvider?.resetAttempts();
+        throw error;
+      }
+
       let nextRegionUrl = await this.regionUrlProvider?.getNextBestRegionUrl();
       if (this.fallbackUrlProvider && !nextRegionUrl) {
-       nextRegionUrl = this.fallbackUrlProvider.getNextUrl();
+        nextRegionUrl = this.fallbackUrlProvider.getNextUrl();
       }
       if (nextRegionUrl) {
         await this.restartConnection(nextRegionUrl);
@@ -1355,7 +1364,7 @@ async function getConnectedAddress(pc: RTCPeerConnection): Promise<string | unde
   return candidates.get(selectedID);
 }
 
-class SignalReconnectError extends Error {}
+class SignalReconnectError extends Error { }
 
 export type EngineEventCallbacks = {
   connected: (joinResp: JoinResponse) => void;
