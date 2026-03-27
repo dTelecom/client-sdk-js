@@ -35,6 +35,7 @@ import {
 } from '../proto/livekit_rtc';
 import { getBrowser } from '../utils/browserParser';
 import DeviceManager from './DeviceManager';
+import { FallbackUrlProvider } from './FallbackUrlProvider';
 import RTCEngine from './RTCEngine';
 import { RegionUrlProvider } from './RegionUrlProvider';
 import {
@@ -65,17 +66,16 @@ import {
   Future,
   Mutex,
   createDummyVideoStreamTrack,
+  getDisconnectReasonFromConnectionError,
   getEmptyAudioStreamTrack,
   isCloud,
+  isSafari,
   isWeb,
+  sleep,
   supportsSetSinkId,
   unpackStreamId,
   unwrapConstraint,
-  isSafari,
-  getDisconnectReasonFromConnectionError,
-  sleep,
-} from './utils'
-import { FallbackUrlProvider } from './FallbackUrlProvider';
+} from './utils';
 
 export enum ConnectionState {
   Disconnected = 'disconnected',
@@ -146,7 +146,7 @@ class Room extends EventEmitter<RoomEventCallbacks> {
 
   private connectionReconcileInterval?: ReturnType<typeof setInterval>;
 
-  private fallbackUrlProvider?: FallbackUrlProvider
+  private fallbackUrlProvider?: FallbackUrlProvider;
 
   /**
    * Creates a new Room, the primary construct for a LiveKit session.
@@ -352,8 +352,8 @@ class Room extends EventEmitter<RoomEventCallbacks> {
    */
   async prepareConnection(url: string) {
     if (this.connOptions?.fallbackUrls) {
-      this.fallbackUrlProvider = new FallbackUrlProvider(this.connOptions.fallbackUrls)
-      const nextUrl = this.fallbackUrlProvider.getNextUrl()
+      this.fallbackUrlProvider = new FallbackUrlProvider(this.connOptions.fallbackUrls);
+      const nextUrl = this.fallbackUrlProvider.getNextUrl();
 
       if (nextUrl && this.state === ConnectionState.Disconnected) {
         await fetch(`http${nextUrl.substring(2)}`, { method: 'HEAD' });
@@ -385,7 +385,7 @@ class Room extends EventEmitter<RoomEventCallbacks> {
     const urlProvider = new RegionUrlProvider(url, token);
 
     if (opts?.fallbackUrls) {
-      this.fallbackUrlProvider = new FallbackUrlProvider(opts.fallbackUrls)
+      this.fallbackUrlProvider = new FallbackUrlProvider(opts.fallbackUrls);
     }
 
     const connectFn = async (
@@ -414,7 +414,7 @@ class Room extends EventEmitter<RoomEventCallbacks> {
           let nextUrl: string | null = null;
           try {
             if (this.fallbackUrlProvider) {
-              nextUrl = this.fallbackUrlProvider.getNextUrl()
+              nextUrl = this.fallbackUrlProvider.getNextUrl();
             } else {
               nextUrl = await urlProvider.getNextBestRegionUrl(this.abortController?.signal);
             }
@@ -435,7 +435,7 @@ class Room extends EventEmitter<RoomEventCallbacks> {
           } else {
             this.handleDisconnect(
               this.options.stopLocalTrackOnUnpublish,
-              getDisconnectReasonFromConnectionError(e)
+              getDisconnectReasonFromConnectionError(e),
             );
             reject(e);
           }
@@ -474,7 +474,8 @@ class Room extends EventEmitter<RoomEventCallbacks> {
           typeof roomOptions.adaptiveStream === 'object' ? true : roomOptions.adaptiveStream,
         maxRetries: connectOptions.maxRetries,
         e2eeEnabled: !!this.e2eeManager,
-        fallbackUrs: connectOptions.fallbackUrls
+        fallbackUrs: connectOptions.fallbackUrls,
+        websocketTimeout: connectOptions.websocketTimeout,
       },
       abortController.signal,
     );

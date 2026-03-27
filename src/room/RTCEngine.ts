@@ -29,6 +29,7 @@ import {
   SubscriptionResponse,
   TrackPublishedResponse,
 } from '../proto/livekit_rtc';
+import { FallbackUrlProvider } from './FallbackUrlProvider';
 import PCTransport, { PCEvents } from './PCTransport';
 import type { ReconnectContext, ReconnectPolicy } from './ReconnectPolicy';
 import { RegionUrlProvider } from './RegionUrlProvider';
@@ -56,12 +57,12 @@ import {
   supportsAddTrack,
   supportsTransceiver,
 } from './utils';
-import { FallbackUrlProvider } from './FallbackUrlProvider'
 
 const lossyDataChannel = '_lossy';
 const reliableDataChannel = '_reliable';
 const minReconnectWait = 2 * 1000;
 const leaveReconnect = 'leave-reconnect';
+const joinRetryDelayMs = 750;
 
 enum PCState {
   New,
@@ -159,7 +160,7 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
 
   private fallbackUrlProvider?: FallbackUrlProvider;
 
-  private fallbackUrls?: string[]
+  private fallbackUrls?: string[];
 
   constructor(private options: InternalRoomOptions) {
     super();
@@ -223,7 +224,7 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
       if (e instanceof ConnectionError && navigator.onLine === true) {
         if (e.reason === ConnectionErrorReason.ServerUnreachable) {
           if (this.joinAttempts <= this.maxJoinAttempts) {
-            await sleep(220 * this.joinAttempts);
+            await sleep(Math.min(joinRetryDelayMs * this.joinAttempts, 2000));
             log.warn(
               `Couldn't connect to server, attempt ${this.joinAttempts} of ${this.maxJoinAttempts}`,
             );
@@ -855,7 +856,7 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
         // unrecoverable
         recoverable = false;
       } else if (
-        e instanceof SignalReconnectError && e.message === 'server was not reachable' ||
+        (e instanceof SignalReconnectError && e.message === 'server was not reachable') ||
         !(e instanceof SignalReconnectError)
       ) {
         // cannot resume
@@ -866,7 +867,8 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
         this.handleDisconnect('reconnect', ReconnectReason.RR_UNKNOWN);
       } else {
         log.info(
-          `could not recover connection after ${this.reconnectAttempts} attempts, ${Date.now() - this.reconnectStart
+          `could not recover connection after ${this.reconnectAttempts} attempts, ${
+            Date.now() - this.reconnectStart
           }ms. giving up`,
         );
         this.emit(EngineEvent.Disconnected);
@@ -1364,7 +1366,7 @@ async function getConnectedAddress(pc: RTCPeerConnection): Promise<string | unde
   return candidates.get(selectedID);
 }
 
-class SignalReconnectError extends Error { }
+class SignalReconnectError extends Error {}
 
 export type EngineEventCallbacks = {
   connected: (joinResp: JoinResponse) => void;

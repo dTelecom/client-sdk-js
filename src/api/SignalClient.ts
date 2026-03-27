@@ -51,17 +51,20 @@ interface ConnectOpts {
   publishOnly?: string;
 
   adaptiveStream?: boolean;
+
+  websocketTimeout?: number;
 }
 
 // public options
 export interface SignalOptions {
   autoSubscribe: boolean;
-  fallbackUrs?: string[]
+  fallbackUrs?: string[];
   /** @deprecated */
   publishOnly?: string;
   adaptiveStream?: boolean;
   maxRetries: number;
   e2eeEnabled: boolean;
+  websocketTimeout?: number;
 }
 
 type SignalMessage = SignalRequest['message'];
@@ -218,8 +221,25 @@ export class SignalClient {
     const params = createConnectionParams(token, clientInfo, opts);
 
     return new Promise<JoinResponse | ReconnectResponse | void>(async (resolve, reject) => {
+      const cleanup = () => {
+        clearTimeout(wsTimeout);
+        abortSignal?.removeEventListener('abort', abortHandler);
+      };
+
+      const wsTimeout = setTimeout(() => {
+        log.debug('websocket connection timeout');
+        cleanup();
+        reject(
+          new ConnectionError(
+            opts.reconnect ? 'signal reconnect timed out' : 'signal connection timed out',
+            ConnectionErrorReason.ServerUnreachable,
+          ),
+        );
+      }, opts.websocketTimeout || 3_000);
+
       const abortHandler = async () => {
         this.close();
+        cleanup();
         reject(new ConnectionError('room connection has been cancelled (signal)'));
       };
 
@@ -257,6 +277,8 @@ export class SignalClient {
                 ConnectionErrorReason.ServerUnreachable,
               ),
             );
+          } finally {
+            cleanup();
           }
           return;
         }
@@ -282,7 +304,7 @@ export class SignalClient {
           // handle join message only
           if (resp.message?.$case === 'join') {
             this.isConnected = true;
-            abortSignal?.removeEventListener('abort', abortHandler);
+            cleanup();
             this.pingTimeoutDuration = resp.message.join.pingTimeout;
             this.pingIntervalDuration = resp.message.join.pingInterval;
 
@@ -297,7 +319,7 @@ export class SignalClient {
           } else if (opts.reconnect) {
             // in reconnecting, any message received means signal reconnected
             this.isConnected = true;
-            abortSignal?.removeEventListener('abort', abortHandler);
+            cleanup();
             this.startPingInterval();
             if (resp.message?.$case === 'reconnect') {
               resolve(resp.message?.reconnect);

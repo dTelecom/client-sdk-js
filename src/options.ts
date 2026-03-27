@@ -121,7 +121,10 @@ export interface InternalRoomConnectOptions {
   maxRetries: number;
 
   /** fallback urls */
-  fallbackUrls?: string[]
+  fallbackUrls?: string[];
+
+  /** Websocket Timeout */
+  websocketTimeout?: number;
 }
 
 /**
