@@ -592,12 +592,14 @@ class Room extends EventEmitter<RoomEventCallbacks> {
 
     // also hook unload event
     if (isWeb() && this.options.disconnectOnPageLeave) {
-      // capturing both 'pagehide' and 'beforeunload' to capture broadest set of browser behaviors
+      // capture page leave across browser behaviors
       window.addEventListener('pagehide', this.onPageLeave);
-      window.addEventListener('beforeunload', this.onPageLeave);
+      if (this.options.disconnectOnPageLeave !== 'pagehide') {
+        window.addEventListener('beforeunload', this.onPageLeave);
+      }
     }
     if (isWeb()) {
-      document.addEventListener('freeze', this.onPageLeave);
+      window.addEventListener('freeze', this.onPageLeave);
       navigator.mediaDevices?.addEventListener('devicechange', this.handleDeviceChange);
     }
     this.setAndEmitConnectionState(ConnectionState.Connected);

@@ -12,6 +12,8 @@ export interface WebAudioSettings {
   audioContext: AudioContext;
 }
 
+export type DisconnectOnPageLeave = boolean | 'pagehide';
+
 /**
  * @internal
  */
@@ -66,10 +68,11 @@ export interface InternalRoomOptions {
   reconnectPolicy: ReconnectPolicy;
 
   /**
-   * specifies whether the sdk should automatically disconnect the room
-   * on 'pagehide' and 'beforeunload' events
+   * specifies whether the sdk should automatically disconnect the room on page leave.
+   * `true` listens to both `pagehide` and `beforeunload`, `'pagehide'` listens to
+   * `pagehide` only.
    */
-  disconnectOnPageLeave: boolean;
+  disconnectOnPageLeave: DisconnectOnPageLeave;
 
   /**
    * @internal
