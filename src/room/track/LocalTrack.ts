@@ -37,6 +37,8 @@ export default abstract class LocalTrack extends Track {
 
   protected processorLock: Mutex;
 
+  protected manuallyStopped: boolean;
+
   /**
    *
    * @param mediaTrack
@@ -56,6 +58,7 @@ export default abstract class LocalTrack extends Track {
     this.muteLock = new Mutex();
     this.pauseUpstreamLock = new Mutex();
     this.processorLock = new Mutex();
+    this.manuallyStopped = false;
     this.setMediaStreamTrack(mediaTrack, true);
 
     // added to satisfy TS compiler, constraints are synced with MediaStreamTrack
@@ -178,6 +181,9 @@ export default abstract class LocalTrack extends Track {
   }
 
   async unmute(): Promise<LocalTrack> {
+    if (this.manuallyStopped) {
+      return this;
+    }
     this.setTrackMuted(false);
     return this;
   }
@@ -200,6 +206,7 @@ export default abstract class LocalTrack extends Track {
   }
 
   protected async restart(constraints?: MediaTrackConstraints): Promise<LocalTrack> {
+    this.manuallyStopped = false;
     if (!constraints) {
       constraints = this._constraints;
     }
@@ -230,6 +237,10 @@ export default abstract class LocalTrack extends Track {
     // create new track and attach
     const mediaStream = await navigator.mediaDevices.getUserMedia(streamConstraints);
     const newTrack = mediaStream.getTracks()[0];
+    if (this.manuallyStopped) {
+      newTrack.stop();
+      return this;
+    }
     newTrack.addEventListener('ended', this.handleEnded);
     log.debug('re-acquired MediaStreamTrack');
 
@@ -244,6 +255,9 @@ export default abstract class LocalTrack extends Track {
       });
     }
     this.emit(TrackEvent.Restarted, this);
+    if (this.manuallyStopped) {
+      this.stop();
+    }
     return this;
   }
 
@@ -290,6 +304,7 @@ export default abstract class LocalTrack extends Track {
   };
 
   stop() {
+    this.manuallyStopped = true;
     super.stop();
 
     this._mediaStreamTrack.removeEventListener('ended', this.handleEnded);
