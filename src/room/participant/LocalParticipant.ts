@@ -16,7 +16,12 @@ import {
   TrackUnpublishedResponse,
 } from '../../proto/livekit_rtc';
 import type RTCEngine from '../RTCEngine';
-import { DeviceUnsupportedError, TrackInvalidError, UnexpectedConnectionState } from '../errors';
+import {
+  DeviceUnsupportedError,
+  PublishTrackError,
+  TrackInvalidError,
+  UnexpectedConnectionState,
+} from '../errors';
 import { EngineEvent, ParticipantEvent, TrackEvent } from '../events';
 import LocalAudioTrack from '../track/LocalAudioTrack';
 import LocalTrack from '../track/LocalTrack';
@@ -597,12 +602,29 @@ export default class LocalParticipant extends Participant {
     }
   }
 
+  /**
+   * Throws when the participant may not publish a track from `source`: the node would drop the
+   * request without answering and the publish would wait forever.
+   */
+  private checkPublishPermission(source: Track.Source) {
+    const permissions = this.permissions;
+    if (!permissions) return;
+    if (!permissions.canPublish) {
+      throw new PublishTrackError('not permitted to publish: the token has canPublish false');
+    }
+    const sources = permissions.canPublishSources ?? [];
+    if (sources.length > 0 && !sources.includes(Track.sourceToProto(source))) {
+      throw new PublishTrackError(`not permitted to publish a ${source} track`);
+    }
+  }
+
   private async publish(
     track: LocalTrack,
     opts: TrackPublishOptions,
     options: TrackPublishOptions | undefined,
     isStereo: boolean,
   ) {
+    this.checkPublishPermission(track.source);
     const existingTrackOfSource = Array.from(this.tracks.values()).find(
       (publishedTrack) => track instanceof LocalTrack && publishedTrack.source === track.source,
     );

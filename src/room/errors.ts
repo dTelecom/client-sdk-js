@@ -56,6 +56,17 @@ export class NegotiationError extends LivekitError {
   }
 }
 
+/**
+ * Publishing a track that the participant's permissions do not allow (`canPublish` false, or a
+ * source outside `canPublishSources`). The node drops such a request without an answer, so the
+ * SDK refuses it before sending.
+ */
+export class PublishTrackError extends LivekitError {
+  constructor(message?: string) {
+    super(15, message ?? 'not permitted to publish this track');
+  }
+}
+
 export class PublishDataError extends LivekitError {
   constructor(message?: string) {
     super(13, message ?? 'unable to publish data');
