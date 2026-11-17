@@ -1,47 +1,86 @@
-# JavaScript/TypeScript client SDK
+# dTelecom JavaScript/TypeScript client SDK
 
-## Docs
+`@dtelecom/livekit-client` connects a browser to dTelecom rooms: join, publish camera, microphone and screen, and receive other participants' tracks and data. It is dTelecom's build of the LiveKit client and works with dTelecom Cloud.
 
-Docs and guides at [https://docs.dtelecom.org](https://docs.dtelecom.org)
+Your backend creates the participant token with the server SDK ([`@dtelecom/server-sdk-js`](https://github.com/dTelecom/server-sdk-js) or [`server-sdk-go`](https://github.com/dTelecom/server-sdk-go)); the browser only gets the token and the node URL. Never put the API key or secret in browser code.
 
 ## Installation
 
-### Yarn
+```shell
+npm install @dtelecom/livekit-client
+```
+
+or
 
 ```shell
 yarn add @dtelecom/livekit-client
 ```
 
-### NPM
+### Without a bundler
 
-```shell
-npm install @dtelecom/livekit-client --save
+The browser build registers a global named `LivekitClient` (from 1.12.25):
+
+```html
+<script src="https://unpkg.com/@dtelecom/livekit-client@1.12.25/dist/livekit-client.umd.js"></script>
+<script type="module">
+  const { Room, RoomEvent } = LivekitClient;
+  const { token, wsUrl } = await (await fetch('/api/token')).json();
+  const room = new Room();
+  await room.connect(wsUrl, token);
+</script>
 ```
+
+Versions up to 1.12.24 register `window['@dtelecom/livekitClient']`; that name still works.
+
+## Getting a token
+
+On your server, with dTelecom Cloud credentials (`DTELECOM_API_KEY`, `DTELECOM_API_SECRET`, `DTELECOM_CLOUD_URL`):
+
+```typescript
+import { CloudClient } from '@dtelecom/server-sdk-js';
+
+const cloud = new CloudClient();
+
+// e.g. GET /api/token
+const { token, wsUrl, sessionId, expiresAt } = await cloud.createToken({
+  room: 'my-room',
+  identity: userId, // unique in the room; a second connection with it replaces the first
+  name: userName,
+  clientIp: request.ip, // picks the node nearest to the user
+});
+// send { token, wsUrl } to the browser
+```
+
+A token lasts 6 hours by default (at most 24). For longer sessions your backend extends it with `cloud.extendToken(sessionId, '1h')` before `expiresAt`; a participant whose token expired without an extension is removed from the room about a minute later.
 
 ## Usage
 
-Examples below are in TypeScript, if using JS/CommonJS imports replace import with:
+Examples below are in TypeScript. With CommonJS:
 
 ```javascript
-const livekit = require('@dtelecom/livekit-client');
-
-const room = new livekit.Room(...);
-await room.connect(...);
+const { Room } = require('@dtelecom/livekit-client');
 ```
 
 ### Connecting to a room, publish video & audio
 
 ```typescript
 import {
+  DisconnectReason,
+  LocalParticipant,
+  LocalTrackPublication,
   Participant,
   RemoteParticipant,
   RemoteTrack,
   RemoteTrackPublication,
   Room,
   RoomEvent,
+  Track,
+  VideoPresets,
 } from '@dtelecom/livekit-client';
 
-// creates a new room with options
+// token and wsUrl come from your backend (see "Getting a token")
+const { token, wsUrl } = await (await fetch('/api/token')).json();
+
 const room = new Room({
   // automatically manage subscribed video quality
   adaptiveStream: true,
@@ -63,8 +102,8 @@ room
   .on(RoomEvent.Disconnected, handleDisconnect)
   .on(RoomEvent.LocalTrackUnpublished, handleLocalTrackUnpublished);
 
-// connect to room
-await room.connect('ws://localhost:7800', token);
+// connect to the node your backend got with the token
+await room.connect(wsUrl, token);
 console.log('connected to room', room.name);
 
 // publish local camera and mic tracks
@@ -91,27 +130,25 @@ function handleTrackUnsubscribed(
   track.detach();
 }
 
-function handleLocalTrackUnpublished(track: LocalTrackPublication, participant: LocalParticipant) {
+function handleLocalTrackUnpublished(publication: LocalTrackPublication, participant: LocalParticipant) {
   // when local tracks are ended, update UI to remove them from rendering
-  track.detach();
+  publication.track?.detach();
 }
 
 function handleActiveSpeakerChange(speakers: Participant[]) {
   // show UI indicators when participant is speaking
 }
 
-function handleDisconnect() {
-  console.log('disconnected from room');
+function handleDisconnect(reason?: DisconnectReason) {
+  // CLIENT_INITIATED: room.disconnect(); PARTICIPANT_REMOVED: removed by your backend or after
+  // the token expired; DUPLICATE_IDENTITY: the same identity joined elsewhere; ROOM_DELETED
+  console.log('disconnected from room', reason);
 }
 ```
 
-In order to connect to a room, you need to first create an access token.
-
-See [access token docs](https://docs.dtelecom.org/guides/access-tokens) for details
-
 ### Handling common track types
 
-While LiveKit is designed to be flexible, we've added a few shortcuts that makes working with common track types simple. For a user's camera, microphone, and screen share, you can enable them with the following `LocalParticipant` methods:
+There are shortcuts that make working with common track types simple. For a user's camera, microphone, and screen share, you can enable them with the following `LocalParticipant` methods:
 
 ```typescript
 const p = room.localParticipant;

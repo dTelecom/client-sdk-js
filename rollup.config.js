@@ -7,7 +7,6 @@ import terser from '@rollup/plugin-terser';
 import del from 'rollup-plugin-delete';
 import replace from 'rollup-plugin-re';
 import typescript from 'rollup-plugin-typescript2';
-import packageJson from './package.json';
 
 export function kebabCaseToPascalCase(string = '') {
   return string.replace(/(^\w|-\w)/g, (replaceString) =>
@@ -48,7 +47,12 @@ export default {
       format: 'umd',
       strict: true,
       sourcemap: true,
-      name: kebabCaseToPascalCase(packageJson.name),
+      // The browser global. Derived from the scoped package name it would be
+      // "@dtelecom/livekitClient", which is not an identifier; use LiveKit's own name instead.
+      name: 'LivekitClient',
+      // Pages written for 1.12.24 and older read window["@dtelecom/livekitClient"]: keep it.
+      footer:
+        'if (typeof globalThis !== "undefined" && globalThis.LivekitClient) { globalThis["@dtelecom/livekitClient"] = globalThis.LivekitClient; }',
       plugins: [terser()],
     },
   ],
