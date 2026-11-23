@@ -4,6 +4,8 @@
 
 Your backend creates the participant token with the server SDK ([`@dtelecom/server-sdk-js`](https://github.com/dTelecom/server-sdk-js) or [`server-sdk-go`](https://github.com/dTelecom/server-sdk-go)); the browser only gets the token and the node URL. Never put the API key or secret in browser code.
 
+**Documentation:** [docs.dtelecom.org](https://docs.dtelecom.org), see [Connect from your app](https://docs.dtelecom.org/rooms/connect/) and [Video conference with React](https://docs.dtelecom.org/guides/video-conference-react/).
+
 ## Installation
 
 ```shell
@@ -21,7 +23,7 @@ yarn add @dtelecom/livekit-client
 The browser build registers a global named `LivekitClient` (from 1.12.25):
 
 ```html
-<script src="https://unpkg.com/@dtelecom/livekit-client@1.12.25/dist/livekit-client.umd.js"></script>
+<script src="https://unpkg.com/@dtelecom/livekit-client@1.12.26/dist/livekit-client.umd.js"></script>
 <script type="module">
   const { Room, RoomEvent } = LivekitClient;
   const { token, wsUrl } = await (await fetch('/api/token')).json();
