@@ -316,3 +316,25 @@ You can have a look at the `"browerslist"` section of `package.json` for more de
 If you are targeting legacy browsers, but still want adaptiveStream functionality you'll likely need to use polyfills for [ResizeObserver](https://www.npmjs.com/package/resize-observer-polyfill) and [IntersectionObserver](https://www.npmjs.com/package/intersection-observer).
 
 Also when targeting legacy browsers, older than the ones specified in our browserslist target, make sure to transpile the library code to your desired target and include required polyfills with babel and/or corejs.
+
+### Test a release candidate
+
+The **Consumer** workflow on `dtelecom` tests the browser SDK, builds it from source, packs it, and installs that tarball in the [React first-call app](https://github.com/dTelecom/components-js/tree/dtelecom/examples/first-call) with the published component packages. It checks the production build and loads the SDK in Chromium on pushes and pull requests.
+
+For a local check, use Node 22.14.0 and Yarn 1.22.22. From the browser SDK repository run
+
+```sh
+yarn install --frozen-lockfile
+yarn test --runInBand
+yarn build
+work=$(mktemp -d)
+npm pack --pack-destination "$work" --silent
+git clone https://github.com/dTelecom/components-js.git "$work/components-js"
+git -C "$work/components-js" checkout 9482cef50d26b6054514464f51cd0f77d42a4286
+"$work/components-js/tooling/consumer/prepare.sh" "$work/app" "$work"/*.tgz
+cd "$work/app"
+npx playwright install --only-shell chromium
+node check.mjs smoke
+```
+
+With test project credentials, run `node --env-file=/path/to/test.env check.mjs live` from that app. The same two-browser test runs on a manual **Consumer** dispatch on `dtelecom`, using the `sdk-live-tests` GitHub environment. It verifies two-way media and chat before and after an SDK reconnect and checks both peers leave the room.

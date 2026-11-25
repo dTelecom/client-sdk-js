@@ -9,7 +9,10 @@ describe('RemoteVideoTrack', () => {
   let track: RemoteVideoTrack;
 
   beforeEach(() => {
-    track = new RemoteVideoTrack(new MockMediaStreamTrack(), 'sid', undefined, {});
+    track = new RemoteVideoTrack(new MockMediaStreamTrack(), 'sid', undefined, {
+      pauseWhenNotVisible: true,
+      updateDimensions: true,
+    });
   });
   describe('element visibility', () => {
     let events: boolean[] = [];
