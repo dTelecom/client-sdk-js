@@ -29,7 +29,11 @@ import {
   SubscriptionResponse,
   TrackPublishedResponse,
 } from '../proto/livekit_rtc';
-import { FallbackUrlProvider } from './FallbackUrlProvider';
+import {
+  FallbackUrlProvider,
+  isEndpointUnavailable,
+  isTerminalConnectionError,
+} from './FallbackUrlProvider';
 import PCTransport, { PCEvents } from './PCTransport';
 import type { ReconnectContext, ReconnectPolicy } from './ReconnectPolicy';
 import { RegionUrlProvider } from './RegionUrlProvider';
@@ -162,6 +166,8 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
 
   private fallbackUrls?: string[];
 
+  private restartController?: AbortController;
+
   constructor(private options: InternalRoomOptions) {
     super();
     this.client = new SignalClient();
@@ -193,7 +199,8 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
     opts: SignalOptions,
     abortSignal?: AbortSignal,
   ): Promise<JoinResponse> {
-    this.url = url;
+    if (abortSignal?.aborted)
+      throw new ConnectionError('Join cancelled', ConnectionErrorReason.Cancelled);
     this.token = token;
     this.signalOpts = opts;
     this.maxJoinAttempts = opts.maxRetries;
@@ -202,6 +209,9 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
     try {
       this.joinAttempts += 1;
       const joinResponse = await this.client.join(url, token, opts, abortSignal);
+      if (abortSignal?.aborted)
+        throw new ConnectionError('Join cancelled', ConnectionErrorReason.Cancelled);
+      this.url = url;
       this._isClosed = false;
       this.latestJoinResponse = joinResponse;
 
@@ -221,7 +231,12 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
       this.joinAttempts = 0;
       return joinResponse;
     } catch (e) {
-      if (e instanceof ConnectionError && navigator.onLine === true) {
+      if (
+        e instanceof ConnectionError &&
+        !isTerminalConnectionError(e) &&
+        !abortSignal?.aborted &&
+        navigator.onLine === true
+      ) {
         if (e.reason === ConnectionErrorReason.ServerUnreachable) {
           if (this.joinAttempts <= this.maxJoinAttempts) {
             await sleep(Math.min(joinRetryDelayMs * this.joinAttempts, 2000));
@@ -238,6 +253,7 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
   }
 
   async close() {
+    this.restartController?.abort();
     const unlock = await this.closingLock.lock();
     if (this.isClosed) {
       unlock();
@@ -813,9 +829,10 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
     if (this.url && this.token && isCloud(new URL(this.url))) {
       this.regionUrlProvider = new RegionUrlProvider(this.url, this.token);
     }
-    if (this.fallbackUrls) {
-      this.fallbackUrlProvider = new FallbackUrlProvider(this.fallbackUrls);
-    }
+    this.fallbackUrlProvider =
+      this.url && this.fallbackUrls?.length
+        ? new FallbackUrlProvider(this.url, this.fallbackUrls)
+        : undefined;
     this.reconnectTimeout = CriticalTimers.setTimeout(
       () => this.attemptReconnect(disconnectReason),
       delay,
@@ -842,13 +859,15 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
     try {
       this.attemptingReconnect = true;
       if (this.fullReconnectOnNext) {
-        await this.restartConnection();
+        this.restartController = new AbortController();
+        await this.restartConnection(undefined, this.restartController.signal);
       } else {
         await this.resumeConnection(reason);
       }
       this.clearPendingReconnect();
       this.fullReconnectOnNext = false;
     } catch (e) {
+      if (this.restartController?.signal.aborted) return;
       this.reconnectAttempts += 1;
       let recoverable = true;
       if (e instanceof UnexpectedConnectionState) {
@@ -875,6 +894,7 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
         await this.close();
       }
     } finally {
+      this.restartController = undefined;
       this.attemptingReconnect = false;
     }
   }
@@ -890,7 +910,7 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
     return null;
   }
 
-  private async restartConnection(regionUrl?: string) {
+  private async restartConnection(regionUrl?: string, abortSignal?: AbortSignal) {
     try {
       if (!this.url || !this.token) {
         // permanent failure, don't attempt reconnection
@@ -913,12 +933,20 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
           throw new SignalReconnectError();
         }
         // in case a regionUrl is passed, the region URL takes precedence
-        joinResponse = await this.join(regionUrl ?? this.url, this.token, this.signalOpts);
+        joinResponse = await this.join(
+          regionUrl ?? this.url,
+          this.token,
+          this.signalOpts,
+          abortSignal,
+        );
       } catch (e) {
-        if (e instanceof ConnectionError && e.reason === ConnectionErrorReason.NotAllowed) {
-          throw new UnexpectedConnectionState('could not reconnect, token might be expired');
+        if (
+          isTerminalConnectionError(e) ||
+          (this.fallbackUrlProvider && !isEndpointUnavailable(e))
+        ) {
+          throw new UnexpectedConnectionState(e instanceof Error ? e.message : undefined);
         }
-        throw new SignalReconnectError();
+        throw this.fallbackUrlProvider ? e : new SignalReconnectError();
       }
 
       if (this.shouldFailNext) {
@@ -936,18 +964,22 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
       this.emit(EngineEvent.Restarted);
     } catch (error) {
       // Check if browser is offline first - no point cycling regions if offline
-      if (navigator.onLine === false) {
+      if (
+        abortSignal?.aborted ||
+        navigator.onLine === false ||
+        this._isClosed ||
+        (this.fallbackUrlProvider && !isEndpointUnavailable(error))
+      ) {
         this.regionUrlProvider?.resetAttempts();
         this.fallbackUrlProvider?.resetAttempts();
         throw error;
       }
 
-      let nextRegionUrl = await this.regionUrlProvider?.getNextBestRegionUrl();
-      if (this.fallbackUrlProvider && !nextRegionUrl) {
-        nextRegionUrl = this.fallbackUrlProvider.getNextUrl();
-      }
+      const nextRegionUrl = this.fallbackUrlProvider
+        ? this.fallbackUrlProvider.getNextUrl()
+        : await this.regionUrlProvider?.getNextBestRegionUrl();
       if (nextRegionUrl) {
-        await this.restartConnection(nextRegionUrl);
+        await this.restartConnection(nextRegionUrl, abortSignal);
         return;
       } else {
         // no more regions to try (or we're not on cloud)
@@ -984,8 +1016,8 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
       if (e instanceof Error) {
         message = e.message;
       }
-      if (e instanceof ConnectionError && e.reason === ConnectionErrorReason.NotAllowed) {
-        throw new UnexpectedConnectionState('could not reconnect, token might be expired');
+      if (isTerminalConnectionError(e)) {
+        throw new UnexpectedConnectionState(e instanceof Error ? e.message : undefined);
       }
       throw new SignalReconnectError(message);
     }
@@ -1026,10 +1058,14 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
       );
     }
     return new Promise<void>((resolve, reject) => {
-      const abortHandler = () => {
-        log.warn('closing engine');
+      const onConnected = () => {
         CriticalTimers.clearTimeout(connectTimeout);
-
+        abortController?.signal.removeEventListener('abort', abortHandler);
+        resolve();
+      };
+      const abortHandler = () => {
+        CriticalTimers.clearTimeout(connectTimeout);
+        this.off(EngineEvent.Connected, onConnected);
         reject(
           new ConnectionError(
             'room connection has been cancelled',
@@ -1037,19 +1073,21 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
           ),
         );
       };
-      if (abortController?.signal.aborted) {
-        abortHandler();
-      }
-      abortController?.signal.addEventListener('abort', abortHandler);
-      const onConnected = () => {
-        CriticalTimers.clearTimeout(connectTimeout);
-        abortController?.signal.removeEventListener('abort', abortHandler);
-        resolve();
-      };
       const connectTimeout = CriticalTimers.setTimeout(() => {
         this.off(EngineEvent.Connected, onConnected);
-        reject(new ConnectionError('could not establish pc connection'));
+        abortController?.signal.removeEventListener('abort', abortHandler);
+        reject(
+          new ConnectionError(
+            'could not establish pc connection',
+            ConnectionErrorReason.ServerUnreachable,
+          ),
+        );
       }, timeout ?? this.peerConnectionTimeout);
+      if (abortController?.signal.aborted) {
+        abortHandler();
+        return;
+      }
+      abortController?.signal.addEventListener('abort', abortHandler);
       this.once(EngineEvent.Connected, onConnected);
     });
   }
@@ -1081,7 +1119,10 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
     }
 
     // have not reconnected, throw
-    throw new ConnectionError('could not establish PC connection');
+    throw new ConnectionError(
+      'could not establish PC connection',
+      ConnectionErrorReason.ServerUnreachable,
+    );
   }
 
   waitForRestarted = () => {

@@ -35,7 +35,7 @@ import {
 } from '../proto/livekit_rtc';
 import { getBrowser } from '../utils/browserParser';
 import DeviceManager from './DeviceManager';
-import { FallbackUrlProvider } from './FallbackUrlProvider';
+import { FallbackUrlProvider, isEndpointUnavailable } from './FallbackUrlProvider';
 import RTCEngine from './RTCEngine';
 import { RegionUrlProvider } from './RegionUrlProvider';
 import {
@@ -145,8 +145,6 @@ class Room extends EventEmitter<RoomEventCallbacks> {
   private cachedParticipantSids: Array<string>;
 
   private connectionReconcileInterval?: ReturnType<typeof setInterval>;
-
-  private fallbackUrlProvider?: FallbackUrlProvider;
 
   /**
    * Creates a new Room, the primary construct for a LiveKit session.
@@ -351,17 +349,7 @@ class Room extends EventEmitter<RoomEventCallbacks> {
    * @experimental
    */
   async prepareConnection(url: string) {
-    if (this.connOptions?.fallbackUrls) {
-      this.fallbackUrlProvider = new FallbackUrlProvider(this.connOptions.fallbackUrls);
-      const nextUrl = this.fallbackUrlProvider.getNextUrl();
-
-      if (nextUrl && this.state === ConnectionState.Disconnected) {
-        await fetch(`http${nextUrl.substring(2)}`, { method: 'HEAD' });
-        log.debug(`prepared connection to ${nextUrl}`);
-      }
-    } else {
-      await fetch(`http${url.substring(2)}`, { method: 'HEAD' });
-    }
+    await fetch(url.replace(/^ws/, 'http'), { method: 'HEAD' });
   }
 
   connect = async (url: string, token: string, opts?: RoomConnectOptions): Promise<void> => {
@@ -384,9 +372,11 @@ class Room extends EventEmitter<RoomEventCallbacks> {
 
     const urlProvider = new RegionUrlProvider(url, token);
 
-    if (opts?.fallbackUrls) {
-      this.fallbackUrlProvider = new FallbackUrlProvider(opts.fallbackUrls);
-    }
+    const fallback = opts?.fallbackUrls?.length
+      ? new FallbackUrlProvider(url, opts.fallbackUrls)
+      : undefined;
+    // Keep the original primary eligible when a later full restart begins on another node.
+    const connectOptions = fallback ? { ...opts, fallbackUrls: [url, ...fallback.urls] } : opts;
 
     const connectFn = async (
       resolve: () => void,
@@ -396,25 +386,29 @@ class Room extends EventEmitter<RoomEventCallbacks> {
       if (this.abortController) {
         this.abortController.abort();
       }
-      this.abortController = new AbortController();
+      const controller = new AbortController();
+      this.abortController = controller;
 
       // at this point the intention to connect has been signalled so we can allow cancelling of the connection via disconnect() again
       unlockDisconnect?.();
 
       try {
-        await this.attemptConnection(regionUrl ?? url, token, opts, this.abortController);
+        await this.attemptConnection(regionUrl ?? url, token, connectOptions, controller);
         this.abortController = undefined;
         resolve();
       } catch (e) {
         if (
-          (isCloud(new URL(url)) || this.fallbackUrlProvider) &&
+          (fallback
+            ? navigator.onLine !== false && isEndpointUnavailable(e)
+            : isCloud(new URL(url))) &&
+          !controller.signal.aborted &&
           e instanceof ConnectionError &&
           e.reason !== ConnectionErrorReason.Cancelled
         ) {
           let nextUrl: string | null = null;
           try {
-            if (this.fallbackUrlProvider) {
-              nextUrl = this.fallbackUrlProvider.getNextUrl();
+            if (fallback) {
+              nextUrl = fallback.getNextUrl() ?? null;
             } else {
               nextUrl = await urlProvider.getNextBestRegionUrl(this.abortController?.signal);
             }
@@ -576,7 +570,7 @@ class Room extends EventEmitter<RoomEventCallbacks> {
     if (abortController.signal.aborted) {
       await this.engine.close();
       this.recreateEngine();
-      throw new ConnectionError(`Connection attempt aborted`);
+      throw new ConnectionError('Connection attempt aborted', ConnectionErrorReason.Cancelled);
     }
 
     try {
@@ -626,7 +620,9 @@ class Room extends EventEmitter<RoomEventCallbacks> {
         log.warn('abort connection attempt');
         this.abortController?.abort();
         // in case the abort controller didn't manage to cancel the connection attempt, reject the connect promise explicitly
-        this.connectFuture?.reject?.(new ConnectionError('Client initiated disconnect'));
+        this.connectFuture?.reject?.(
+          new ConnectionError('Client initiated disconnect', ConnectionErrorReason.Cancelled),
+        );
         this.connectFuture = undefined;
       }
       // send leave

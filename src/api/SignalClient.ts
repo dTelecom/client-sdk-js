@@ -240,16 +240,23 @@ export class SignalClient {
       const abortHandler = async () => {
         this.close();
         cleanup();
-        reject(new ConnectionError('room connection has been cancelled (signal)'));
+        reject(
+          new ConnectionError(
+            'room connection has been cancelled (signal)',
+            ConnectionErrorReason.Cancelled,
+          ),
+        );
       };
 
       if (abortSignal?.aborted) {
         abortHandler();
+        return;
       }
       abortSignal?.addEventListener('abort', abortHandler);
       log.debug(`connecting to ${url + params}`);
       if (this.ws) {
         await this.close();
+        if (abortSignal?.aborted) return;
       }
       this.ws = new WebSocket(url + params);
       this.ws.binaryType = 'arraybuffer';

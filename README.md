@@ -2,7 +2,7 @@
 
 `@dtelecom/livekit-client` connects a browser to dTelecom rooms: join, publish camera, microphone and screen, and receive other participants' tracks and data. It is dTelecom's build of the LiveKit client and works with dTelecom Cloud.
 
-Your backend creates the participant token with the server SDK ([`@dtelecom/server-sdk-js`](https://github.com/dTelecom/server-sdk-js) or [`server-sdk-go`](https://github.com/dTelecom/server-sdk-go)); the browser only gets the token and the node URL. Never put the API key or secret in browser code.
+Your backend creates the participant token with the server SDK ([`@dtelecom/server-sdk-js`](https://github.com/dTelecom/server-sdk-js) or [`server-sdk-go`](https://github.com/dTelecom/server-sdk-go)); the browser gets the token, primary node URL and optional ranked fallback URLs. Never put the API key or secret in browser code.
 
 **Documentation:** [docs.dtelecom.org](https://docs.dtelecom.org), see [Connect from your app](https://docs.dtelecom.org/rooms/connect/) and [Video conference with React](https://docs.dtelecom.org/guides/video-conference-react/).
 
@@ -26,9 +26,9 @@ The browser build registers a global named `LivekitClient` (from 1.12.25):
 <script src="https://unpkg.com/@dtelecom/livekit-client@1.12.26/dist/livekit-client.umd.js"></script>
 <script type="module">
   const { Room, RoomEvent } = LivekitClient;
-  const { token, wsUrl } = await (await fetch('/api/token')).json();
+  const { token, wsUrl, fallbackUrls } = await (await fetch('/api/token')).json();
   const room = new Room();
-  await room.connect(wsUrl, token);
+  await room.connect(wsUrl, token, { fallbackUrls });
 </script>
 ```
 
@@ -44,16 +44,18 @@ import { CloudClient } from '@dtelecom/server-sdk-js';
 const cloud = new CloudClient();
 
 // e.g. GET /api/token
-const { token, wsUrl, sessionId, expiresAt } = await cloud.createToken({
+const { token, wsUrl, fallbackUrls, sessionId, expiresAt } = await cloud.createToken({
   room: 'my-room',
   identity: userId, // unique in the room; a second connection with it replaces the first
   name: userName,
   clientIp: request.ip, // picks the node nearest to the user
 });
-// send { token, wsUrl } to the browser
+// send { token, wsUrl, fallbackUrls } to the browser
 ```
 
 A token lasts 6 hours by default (at most 24). For longer sessions your backend extends it with `cloud.extendToken(sessionId, '1h')` before `expiresAt`; a participant whose token expired without an extension is removed from the room about a minute later.
+
+Use only the candidate URLs supplied by your token issuer. The room tries the primary node first and then the alternatives in order if it cannot connect. A full reconnect can also use these nodes. Authentication failures and explicit disconnects stop the attempt. A backend returning only a primary URL still works.
 
 ## Usage
 
@@ -80,8 +82,8 @@ import {
   VideoPresets,
 } from '@dtelecom/livekit-client';
 
-// token and wsUrl come from your backend (see "Getting a token")
-const { token, wsUrl } = await (await fetch('/api/token')).json();
+// token, wsUrl and optional fallbackUrls come from your backend (see "Getting a token")
+const { token, wsUrl, fallbackUrls } = await (await fetch('/api/token')).json();
 
 const room = new Room({
   // automatically manage subscribed video quality
@@ -105,7 +107,7 @@ room
   .on(RoomEvent.LocalTrackUnpublished, handleLocalTrackUnpublished);
 
 // connect to the node your backend got with the token
-await room.connect(wsUrl, token);
+await room.connect(wsUrl, token, { fallbackUrls });
 console.log('connected to room', room.name);
 
 // publish local camera and mic tracks
