@@ -140,6 +140,7 @@ export default class RemoteParticipant extends Participant {
     receiver?: RTCRtpReceiver,
     adaptiveStreamSettings?: AdaptiveStreamSettings,
     triesLeft?: number,
+    protect?: (publication: RemoteTrackPublication) => Promise<void>,
   ) {
     // find the track publication
     // it's possible for the media track to arrive before participant info
@@ -176,6 +177,7 @@ export default class RemoteParticipant extends Participant {
           receiver,
           adaptiveStreamSettings,
           triesLeft! - 1,
+          protect,
         );
       }, 150);
       return;
@@ -190,6 +192,43 @@ export default class RemoteParticipant extends Participant {
       return;
     }
 
+    if (protect) {
+      const expected = publication;
+      protect(expected)
+        .then(() => {
+          if (this.tracks.get(sid) === expected && mediaTrack.readyState !== 'ended') {
+            this.attachSubscribedTrack(
+              mediaTrack,
+              sid,
+              mediaStream,
+              expected,
+              receiver,
+              adaptiveStreamSettings,
+            );
+          }
+        })
+        .catch(() => this.emit(ParticipantEvent.TrackSubscriptionFailed, sid));
+      return;
+    }
+
+    return this.attachSubscribedTrack(
+      mediaTrack,
+      sid,
+      mediaStream,
+      publication,
+      receiver,
+      adaptiveStreamSettings,
+    );
+  }
+
+  private attachSubscribedTrack(
+    mediaTrack: MediaStreamTrack,
+    sid: Track.SID,
+    mediaStream: MediaStream,
+    publication: RemoteTrackPublication,
+    receiver?: RTCRtpReceiver,
+    adaptiveStreamSettings?: AdaptiveStreamSettings,
+  ) {
     const isVideo = mediaTrack.kind === 'video';
     let track: RemoteTrack;
     if (isVideo) {

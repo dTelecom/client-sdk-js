@@ -1,4 +1,4 @@
-import type { E2EEOptions } from './e2ee/types';
+import type { E2EEOptions, NativeMediaEncryption } from './e2ee/types';
 import type { ReconnectPolicy } from './room/ReconnectPolicy';
 import type {
   AudioCaptureOptions,
@@ -92,6 +92,9 @@ export interface InternalRoomOptions {
    * @experimental
    */
   e2ee?: E2EEOptions;
+
+  /** Require native end-to-end encryption for all published and subscribed media. */
+  nativeEncryption?: NativeMediaEncryption;
 }
 
 /**

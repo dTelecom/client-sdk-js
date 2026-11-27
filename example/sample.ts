@@ -34,6 +34,11 @@ import type { SimulationScenario } from '../src/room/types';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
+const mediaEncryptionError = $('media-encryption-error');
+$('dismiss-media-encryption-error').addEventListener('click', () => {
+  mediaEncryptionError.hidden = true;
+});
+
 const state = {
   isFrontFacing: false,
   encoder: new TextEncoder(),
@@ -121,6 +126,10 @@ const appActions = {
     shouldPublish?: boolean,
   ): Promise<Room | undefined> => {
     const room = new Room(roomOptions);
+    mediaEncryptionError.hidden = true;
+    const showEncryptionError = () => {
+      mediaEncryptionError.hidden = false;
+    };
 
     startTime = Date.now();
     await room.prepareConnection(url);
@@ -131,7 +140,12 @@ const appActions = {
       .on(RoomEvent.ParticipantConnected, participantConnected)
       .on(RoomEvent.ParticipantDisconnected, participantDisconnected)
       .on(RoomEvent.DataReceived, handleData)
-      .on(RoomEvent.Disconnected, handleRoomDisconnect)
+      .on(RoomEvent.EncryptionError, showEncryptionError)
+      .on(RoomEvent.Disconnected, (reason) => {
+        room.off(RoomEvent.EncryptionError, showEncryptionError);
+        mediaEncryptionError.hidden = true;
+        handleRoomDisconnect(reason);
+      })
       .on(RoomEvent.Reconnecting, () => appendLog('Reconnecting to room'))
       .on(RoomEvent.Reconnected, async () => {
         appendLog(

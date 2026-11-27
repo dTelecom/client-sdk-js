@@ -142,6 +142,9 @@ class Room extends EventEmitter<RoomEventCallbacks> {
 
   private e2eeManager: E2EEManager | undefined;
 
+  /** Allows native adapters to reject older clients before requesting an encrypted room. */
+  static readonly supportsNativeMediaEncryption = true;
+
   private cachedParticipantSids: Array<string>;
 
   private connectionReconcileInterval?: ReturnType<typeof setInterval>;
@@ -170,6 +173,11 @@ class Room extends EventEmitter<RoomEventCallbacks> {
       ...options?.publishDefaults,
     };
 
+    if (options?.nativeEncryption) {
+      if (options.e2ee) throw new TypeError('Choose one media encryption backend');
+      options.nativeEncryption.bindRoom((error) => this.emit(RoomEvent.EncryptionError, error));
+      this.isE2EEEnabled = true;
+    }
     this.maybeCreateEngine();
 
     this.disconnectLock = new Mutex();
@@ -201,6 +209,10 @@ class Room extends EventEmitter<RoomEventCallbacks> {
    * @experimental
    */
   async setE2EEEnabled(enabled: boolean) {
+    if (this.options.nativeEncryption) {
+      if (!enabled) throw new Error('Encryption is required for this room');
+      return;
+    }
     if (this.e2eeManager) {
       await Promise.all([
         this.localParticipant.setE2EEEnabled(enabled),
@@ -467,7 +479,7 @@ class Room extends EventEmitter<RoomEventCallbacks> {
         adaptiveStream:
           typeof roomOptions.adaptiveStream === 'object' ? true : roomOptions.adaptiveStream,
         maxRetries: connectOptions.maxRetries,
-        e2eeEnabled: !!this.e2eeManager,
+        e2eeEnabled: !!(this.e2eeManager || this.options.nativeEncryption),
         fallbackUrs: connectOptions.fallbackUrls,
         websocketTimeout: connectOptions.websocketTimeout,
       },
@@ -608,6 +620,7 @@ class Room extends EventEmitter<RoomEventCallbacks> {
     const unlock = await this.disconnectLock.lock();
     try {
       if (this.state === ConnectionState.Disconnected) {
+        await this.options.nativeEncryption?.dispose();
         log.debug('already disconnected');
         return;
       }
@@ -976,12 +989,34 @@ class Room extends EventEmitter<RoomEventCallbacks> {
         adaptiveStreamSettings = {};
       }
     }
+    const encryption = this.options.nativeEncryption;
+    const subscriber = this.engine.subscriber;
+    // RTCEngine configured native playout gating before accepting any SDP.
+    // Reset the JS track flag as well when an existing transceiver is reused.
+    if (encryption) mediaTrack.enabled = false;
     participant.addSubscribedMediaTrack(
       mediaTrack,
       trackId,
       stream,
       receiver,
       adaptiveStreamSettings,
+      undefined,
+      encryption
+        ? async (publication) => {
+            if (!publication.isEncrypted || !receiver || !subscriber) {
+              throw new Error('Encrypted room rejected an unprotected remote track');
+            }
+            const pc = subscriber.pc;
+            await encryption.attachReceiver(pc, receiver, participant.identity);
+            if (
+              subscriber !== this.engine?.subscriber ||
+              pc.signalingState === 'closed' ||
+              this.participants.get(participantId) !== participant
+            ) {
+              throw new Error('Encrypted receiver is no longer active');
+            }
+          }
+        : undefined,
     );
   }
 
@@ -1114,6 +1149,9 @@ class Room extends EventEmitter<RoomEventCallbacks> {
         navigator.mediaDevices?.removeEventListener('devicechange', this.handleDeviceChange);
       }
     } finally {
+      this.options.nativeEncryption
+        ?.dispose()
+        .catch((error) => this.emit(RoomEvent.EncryptionError, error));
       this.setAndEmitConnectionState(ConnectionState.Disconnected);
       this.emit(RoomEvent.Disconnected, reason);
     }

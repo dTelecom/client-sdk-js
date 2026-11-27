@@ -53,6 +53,8 @@ export class FrameCryptor extends BaseFrameCryptor {
 
   private trackId: string | undefined;
 
+  private transformGeneration = 0;
+
   private keys: ParticipantKeyHandler;
 
   private videoCodec?: VideoCodec;
@@ -137,10 +139,19 @@ export class FrameCryptor extends BaseFrameCryptor {
       transform: transformFn.bind(this),
     });
 
+    const generation = ++this.transformGeneration;
     readable
       .pipeThrough(transformStream)
       .pipeTo(writable)
       .catch((e) => {
+        // Chromium can reject the old pipe after the receiver has been reused.
+        if (
+          operation === 'decode' &&
+          e?.name === 'InvalidStateError' &&
+          (generation !== this.transformGeneration || this.participantId === undefined)
+        ) {
+          return;
+        }
         console.error(e);
         this.emit('cryptorError', e instanceof CryptorError ? e : new CryptorError(e.message));
       });
@@ -261,7 +272,8 @@ export class FrameCryptor extends BaseFrameCryptor {
       // skip for decryption for empty dtx frames
       encodedFrame.data.byteLength === 0 ||
       // skip decryption if frame is server injected
-      isFrameServerInjected(encodedFrame.data, this.unencryptedFrameByteTrailer)
+      isFrameServerInjected(encodedFrame.data, this.unencryptedFrameByteTrailer) ||
+      isOpusSilenceFrame(encodedFrame)
     ) {
       return controller.enqueue(encodedFrame);
     }
@@ -609,4 +621,16 @@ export function isFrameServerInjected(frameData: ArrayBuffer, trailerBytes: Uint
     frameData.slice(frameData.byteLength - trailerBytes.byteLength),
   );
   return trailerBytes.every((value, index) => value === frameTrailer[index]);
+}
+
+// The dTelecom SFU sends this fixed 80-byte Opus silence packet when a track ends.
+function isOpusSilenceFrame(frame: RTCEncodedAudioFrame | RTCEncodedVideoFrame): boolean {
+  if (frame.data.byteLength !== 80 || isVideoFrame(frame)) return false;
+  const data = new Uint8Array(frame.data);
+  return (
+    data[0] === 0xf8 &&
+    data[1] === 0xff &&
+    data[2] === 0xfe &&
+    data.subarray(3).every((b) => b === 0)
+  );
 }

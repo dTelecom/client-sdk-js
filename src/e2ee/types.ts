@@ -158,3 +158,17 @@ export type DecodeRatchetOptions = {
   /** ratcheted key to try */
   encryptionKey?: CryptoKey;
 };
+
+/** Native media encryption backend for a single room. Each new RTP endpoint is protected separately. */
+export interface NativeMediaEncryption {
+  readonly hasKey: boolean;
+  bindRoom(reportError: (error: Error) => void): void;
+  configureSubscriber(pc: RTCPeerConnection): void;
+  attachSender(pc: RTCPeerConnection, sender: RTCRtpSender, identity: string): Promise<void>;
+  activateSender(transceiver: RTCRtpTransceiver): Promise<void>;
+  attachReceiver(pc: RTCPeerConnection, receiver: RTCRtpReceiver, identity: string): Promise<void>;
+  /** The transport has been closed and can no longer deliver media. */
+  releaseTransport(pc: RTCPeerConnection): Promise<void>;
+  /** Release per-call media keys after final disconnection, including cancelled joins. */
+  dispose(): Promise<void>;
+}

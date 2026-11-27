@@ -273,6 +273,8 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
   }
 
   async cleanupPeerConnections() {
+    const encryption = this.options.nativeEncryption;
+    const transports = [this.publisher?.pc, this.subscriber?.pc];
     if (this.publisher && this.publisher.pc.signalingState !== 'closed') {
       this.publisher.pc.getSenders().forEach((sender) => {
         try {
@@ -315,6 +317,9 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
     this.lossyDCSub = undefined;
     this.reliableDC = undefined;
     this.reliableDCSub = undefined;
+    if (encryption) {
+      await Promise.all(transports.map((pc) => pc && encryption.releaseTransport(pc)));
+    }
   }
 
   async cleanupClient() {
@@ -395,7 +400,7 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
 
     const rtcConfig = this.makeRTCConfiguration(joinResponse);
 
-    if (this.signalOpts?.e2eeEnabled) {
+    if (this.signalOpts?.e2eeEnabled && !this.options.nativeEncryption) {
       log.debug('E2EE - setting up transports with insertable streams');
       //  this makes sure that no data is sent before the transforms are ready
       // @ts-ignore
@@ -405,6 +410,7 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
     const googConstraints = { optional: [{ googDscp: true }] };
     this.publisher = new PCTransport(rtcConfig, googConstraints);
     this.subscriber = new PCTransport(rtcConfig);
+    this.options.nativeEncryption?.configureSubscriber(this.subscriber.pc);
 
     this.emit(EngineEvent.TransportsCreated, this.publisher, this.subscriber);
 
@@ -691,7 +697,17 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
     track: LocalTrack,
     opts: TrackPublishOptions,
     encodings?: RTCRtpEncodingParameters[],
+    identity = '',
   ) {
+    if (this.options.nativeEncryption) {
+      if (track instanceof LocalVideoTrack) track.codec = opts.videoCodec;
+      return this.createProtectedSender(
+        track.mediaStreamTrack,
+        identity,
+        encodings,
+        track.mediaStream,
+      );
+    }
     if (supportsTransceiver()) {
       const sender = await this.createTransceiverRTCRtpSender(track, opts, encodings);
       return sender;
@@ -709,7 +725,18 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
     simulcastTrack: SimulcastTrackInfo,
     opts: TrackPublishOptions,
     encodings?: RTCRtpEncodingParameters[],
+    identity = '',
   ) {
+    if (this.options.nativeEncryption) {
+      if (!opts.videoCodec) throw new TypeError('A backup video codec is required');
+      const sender = await this.createProtectedSender(
+        simulcastTrack.mediaStreamTrack,
+        identity,
+        encodings,
+      );
+      track.setSimulcastTrackSender(opts.videoCodec, sender);
+      return sender;
+    }
     // store RTCRtpSender
     if (supportsTransceiver()) {
       return this.createSimulcastTransceiverSender(track, simulcastTrack, opts, encodings);
@@ -720,6 +747,33 @@ export default class RTCEngine extends EventEmitter<EngineEventCallbacks> {
     }
 
     throw new UnexpectedConnectionState('Cannot stream on this device');
+  }
+
+  private async createProtectedSender(
+    track: MediaStreamTrack,
+    identity: string,
+    encodings?: RTCRtpEncodingParameters[],
+    stream?: MediaStream,
+  ): Promise<RTCRtpSender> {
+    if (!this.publisher || !this.options.nativeEncryption) {
+      throw new UnexpectedConnectionState('Encrypted publisher is unavailable');
+    }
+    const pc = this.publisher.pc;
+    // M150 needs the real track to select its cryptor. An inactive m-line cannot send
+    // media, even if another publication negotiates while cryptor setup is pending.
+    const transceiver = await pc.addTransceiver(track, {
+      direction: 'inactive',
+      sendEncodings: encodings,
+      streams: stream ? [stream] : [],
+    });
+    try {
+      await this.options.nativeEncryption.attachSender(pc, transceiver.sender, identity);
+      await this.options.nativeEncryption.activateSender(transceiver);
+      return transceiver.sender;
+    } catch (error) {
+      transceiver.stop();
+      throw error;
+    }
   }
 
   private async createTransceiverRTCRtpSender(

@@ -91,6 +91,7 @@ export default class LocalParticipant extends Participant {
     this.tracks = new Map();
     this.engine = engine;
     this.roomOptions = options;
+    if (options.nativeEncryption) this.encryptionType = Encryption_Type.GCM;
     this.setupEngine(engine);
     this.activeDeviceMap = new Map();
   }
@@ -239,6 +240,9 @@ export default class LocalParticipant extends Participant {
 
   /** @internal */
   async setE2EEEnabled(enabled: boolean) {
+    if (this.roomOptions.nativeEncryption && !enabled) {
+      throw new Error('Encryption is required for this room');
+    }
     this.encryptionType = enabled ? Encryption_Type.GCM : Encryption_Type.NONE;
     await this.republishAllTracks(undefined, false);
   }
@@ -551,6 +555,10 @@ export default class LocalParticipant extends Participant {
       return existingPublication;
     }
 
+    if (this.roomOptions.nativeEncryption && !this.roomOptions.nativeEncryption.hasKey) {
+      throw new Error('Supply the room media key before publishing');
+    }
+
     const isStereoInput =
       ('channelCount' in track.mediaStreamTrack.getSettings() &&
         // @ts-ignore `channelCount` on getSettings() is currently only available for Safari, but is generally the best way to determine a stereo track https://developer.mozilla.org/en-US/docs/Web/API/MediaTrackSettings/channelCount
@@ -678,7 +686,7 @@ export default class LocalParticipant extends Participant {
       disableDtx: !(opts.dtx ?? true),
       encryption: this.encryptionType,
       stereo: isStereo,
-      disableRed: !(opts.red ?? true),
+      disableRed: this.encryptionType !== Encryption_Type.NONE || !(opts.red ?? true),
     });
 
     // compute encodings and layers for video
@@ -809,7 +817,7 @@ export default class LocalParticipant extends Participant {
     log.debug(`publishing ${track.kind} with encodings`, { encodings, trackInfo: ti });
 
     // store RTPSender
-    track.sender = await this.engine.createSender(track, opts, encodings);
+    track.sender = await this.engine.createSender(track, opts, encodings, this.identity);
 
     if (encodings) {
       if (isFireFox() && track.kind === Track.Kind.Audio) {
@@ -903,6 +911,7 @@ export default class LocalParticipant extends Participant {
     const simulcastTrack = track.addSimulcastTrack(videoCodec, encodings);
     const req = AddTrackRequest.fromPartial({
       cid: simulcastTrack.mediaStreamTrack.id,
+      encryption: this.encryptionType,
       type: Track.kindToProto(track.kind),
       muted: track.isMuted,
       source: Track.sourceToProto(track.source),
@@ -927,7 +936,7 @@ export default class LocalParticipant extends Participant {
     if (encodings) {
       transceiverInit.sendEncodings = encodings;
     }
-    await this.engine.createSimulcastSender(track, simulcastTrack, opts, encodings);
+    await this.engine.createSimulcastSender(track, simulcastTrack, opts, encodings, this.identity);
 
     await this.engine.negotiate();
     log.debug(`published ${videoCodec} for track ${track.sid}`, { encodings, trackInfo: ti });

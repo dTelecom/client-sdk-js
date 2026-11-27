@@ -23,7 +23,7 @@ yarn add @dtelecom/livekit-client
 The browser build registers a global named `LivekitClient` (from 1.12.25):
 
 ```html
-<script src="https://unpkg.com/@dtelecom/livekit-client@1.12.26/dist/livekit-client.umd.js"></script>
+<script src="https://unpkg.com/@dtelecom/livekit-client@1.13.0/dist/livekit-client.umd.js"></script>
 <script type="module">
   const { Room, RoomEvent } = LivekitClient;
   const { token, wsUrl, fallbackUrls } = await (await fetch('/api/token')).json();

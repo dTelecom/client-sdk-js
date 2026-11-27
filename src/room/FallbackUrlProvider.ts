@@ -13,6 +13,7 @@ function endpointKey(value: string): string | undefined {
 /** The issuer's ranked nodes, excluding the node already being attempted. */
 export class FallbackUrlProvider {
   readonly urls: string[] = [];
+
   private index = 0;
 
   constructor(currentUrl: string, candidates: string[]) {
